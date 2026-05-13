@@ -5,7 +5,6 @@ from streamlit_echarts import st_echarts
 st.set_page_config(page_title="Requirement Architect", layout="wide")
 
 st.title("🧩 ダイナミック要求デザイン（A, B, C設計）")
-st.info("💡 図の中の丸印を **【ダブルクリック】** すると、そのノードを選択・編集できます。")
 
 # --- 1. データの初期化 ---
 if 'tree_df' not in st.session_state:
@@ -20,20 +19,20 @@ if 'selected_id' not in st.session_state:
 def build_tree(df, selected_id):
     nodes = {}
     for _, row in df.iterrows():
-        is_selected = (row['ID'] == selected_id)
-        # 選択されているノードの色を変える設定を追加
-        nodes[row['ID']] = {
-            "id": row['ID'], 
+        sid = str(row['ID'])
+        is_selected = (sid == str(selected_id))
+        nodes[sid] = {
+            "id": sid, 
             "name": row['Name'], 
             "children": [],
-            "itemStyle": {"color": "#ff4b4b" if is_selected else "#6366f1"}, # 選択中なら赤
-            "label": {"fontWeight": "bold" if is_selected else "normal"}
+            "itemStyle": {"color": "#ff4b4b" if is_selected else "#6366f1"},
+            "label": {"fontWeight": "bold" if is_selected else "normal", "fontSize": 14}
         }
     
     root_nodes = []
     for _, row in df.iterrows():
-        node = nodes[row['ID']]
-        p_id = row['Parent']
+        node = nodes[str(row['ID'])]
+        p_id = str(row['Parent'])
         if p_id and p_id in nodes:
             nodes[p_id]["children"].append(node)
         else:
@@ -47,41 +46,59 @@ with col_graph:
     tree_data = build_tree(st.session_state.tree_df, st.session_state.selected_id)
     
     options = {
+        "tooltip": {"trigger": "item"},
         "series": [{
             "type": "tree",
             "data": [tree_data],
-            "top": "10%", "left": "10%", "bottom": "10%", "right": "20%",
-            "symbolSize": 26,
+            "top": "15%", "left": "10%", "bottom": "15%", "right": "20%",
+            "symbolSize": 28,
             "initialTreeDepth": 10,
-            "label": {"position": "top", "fontSize": 14},
-            "leaves": {"label": {"position": "right", "align": "left"}},
+            "label": {"position": "top"},
+            "leaves": {"label": {"position": "right"}},
             "expandAndCollapse": True,
-            "animationDuration": 300,
+            "animationDuration": 400,
         }]
     }
     
-    # 🌟 ここで 'dblclick' (ダブルクリック) イベントを指定します
-    events = {"dblclick": "function(params) { return params.data.id; }"}
+    # 最も安定している 'click' を使用
+    events = {"click": "function(params) { return params.data.id; }"}
     res = st_echarts(options, events=events, height="600px", key="tree_editor")
     
-    # ダブルクリックされた時の処理
+    # グラフがクリックされた場合の処理
     if res:
-        new_sel_id = str(res[0]) if isinstance(res, list) else str(res)
-        if new_sel_id != st.session_state.selected_id:
-            st.session_state.selected_id = new_sel_id
+        new_id = str(res[0]) if isinstance(res, list) else str(res)
+        if new_id != st.session_state.selected_id:
+            st.session_state.selected_id = new_id
             st.rerun()
 
 with col_edit:
     st.subheader("🛠️ ノード編集")
     
-    sel_id = st.session_state.selected_id
     df = st.session_state.tree_df
+    
+    # 【バックアップ機能】グラフが反応しないとき用のリスト選択
+    id_list = df['ID'].tolist()
+    # 現在の選択をリストのデフォルトにする
+    try:
+        default_idx = id_list.index(st.session_state.selected_id)
+    except:
+        default_idx = 0
+        
+    manual_sel = st.selectbox("ノードを選択（グラフ反応なし時の予備）:", id_list, index=default_idx)
+    if manual_sel != st.session_state.selected_id:
+        st.session_state.selected_id = manual_sel
+        st.rerun()
+
+    st.divider()
+
+    # 選択中のデータの編集
+    sel_id = st.session_state.selected_id
     current_node = df[df['ID'] == sel_id]
     
     if not current_node.empty:
         with st.form(key="edit_form"):
-            st.write(f"📍 選択中のID: **{sel_id}**")
-            new_name = st.text_input("ラベル名の変更:", value=current_node.iloc[0]['Name'])
+            st.write(f"📍 ID: **{sel_id}** を編集権限")
+            new_name = st.text_input("ラベル名:", value=current_node.iloc[0]['Name'])
             if st.form_submit_button("✅ 名前を確定"):
                 st.session_state.tree_df.loc[df['ID'] == sel_id, 'Name'] = new_name
                 st.rerun()
@@ -91,9 +108,9 @@ with col_edit:
         if st.button("➕ この下に子を追加", use_container_width=True):
             children = df[df['Parent'] == sel_id]
             new_id = f"{sel_id}.{len(children) + 1}"
-            new_row = pd.DataFrame([{"ID": new_id, "Parent": sel_id, "Name": "新しい子"}]).astype(str)
+            new_row = pd.DataFrame([{"ID": new_id, "Parent": sel_id, "Name": "新しい要素"}]).astype(str)
             st.session_state.tree_df = pd.concat([df, new_row], ignore_index=True)
-            st.session_state.selected_id = new_id # 追加した子をそのまま選択
+            st.session_state.selected_id = new_id
             st.rerun()
             
         if sel_id != "1":
@@ -101,5 +118,3 @@ with col_edit:
                 st.session_state.tree_df = df[~df['ID'].str.startswith(sel_id)]
                 st.session_state.selected_id = "1"
                 st.rerun()
-    else:
-        st.info("図の丸印をダブルクリックしてください。")
