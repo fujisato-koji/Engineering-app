@@ -7,21 +7,24 @@ st.set_page_config(page_title="Requirement Architect", layout="wide")
 st.title("🧩 ダイナミック要求デザイン（A, B, C設計）")
 st.markdown("ノード（丸印）をクリックして選択し、名前の変更や子の追加を行ってください。")
 
-# --- 1. データの初期化 ---
+# --- 1. データの初期化（すべて文字列型で固定） ---
 if 'tree_df' not in st.session_state:
-    st.session_state.tree_df = pd.DataFrame([
+    init_data = pd.DataFrame([
         {"ID": "1", "Parent": "", "Name": "新しい要求"}
     ])
+    st.session_state.tree_df = init_data.astype(str)
+
 if 'selected_id' not in st.session_state:
     st.session_state.selected_id = "1"
 
 # --- 2. 階層データの変換ロジック ---
 def build_tree(df):
-    nodes = {str(row['ID']): {"id": str(row['ID']), "name": row['Name'], "children": []} for _, row in df.iterrows()}
+    # IDをキーにした辞書を作成
+    nodes = {row['ID']: {"id": row['ID'], "name": row['Name'], "children": []} for _, row in df.iterrows()}
     root_nodes = []
     for _, row in df.iterrows():
-        node = nodes[str(row['ID'])]
-        p_id = str(row['Parent'])
+        node = nodes[row['ID']]
+        p_id = row['Parent']
         if p_id and p_id in nodes:
             nodes[p_id]["children"].append(node)
         else:
@@ -39,7 +42,7 @@ with col_graph:
             "type": "tree",
             "data": [tree_data],
             "top": "10%", "left": "10%", "bottom": "10%", "right": "20%",
-            "symbolSize": 20,
+            "symbolSize": 24, # 少し大きくして押しやすくしました
             "initialTreeDepth": 10,
             "label": {"position": "top", "fontSize": 14, "fontWeight": "bold"},
             "leaves": {"label": {"position": "right", "align": "left"}},
@@ -48,45 +51,58 @@ with col_graph:
         }]
     }
     
+    # クリックイベントの設定
     events = {"click": "function(params) { return params.data.id; }"}
     res = st_echarts(options, events=events, height="600px", key="tree_editor")
     
-    # 🌟 エラー対策：リストで返ってきた場合は最初の要素を取り出し、文字列に変換する
+    # 🌟 クリックされたら即座に session_state を更新して再描画
     if res:
-        clicked_id = str(res[0]) if isinstance(res, list) else str(res)
-        st.session_state.selected_id = clicked_id
+        new_sel_id = str(res[0]) if isinstance(res, list) else str(res)
+        if new_sel_id != st.session_state.selected_id:
+            st.session_state.selected_id = new_sel_id
+            st.rerun()
 
 with col_edit:
     st.subheader("🛠️ ノード編集")
     
-    sel_id = str(st.session_state.selected_id)
-    # 🌟 列全体も文字列として比較する
+    # 現在の選択状況を確認
+    sel_id = st.session_state.selected_id
     df = st.session_state.tree_df
-    current_node = df[df['ID'].astype(str) == sel_id]
+    current_node = df[df['ID'] == sel_id]
     
     if not current_node.empty:
-        st.success(f"現在選択中: ID [{sel_id}]")
-        
-        new_name = st.text_input("名前を変更:", value=current_node.iloc[0]['Name'])
-        if st.button("✅ 名前を反映"):
-            st.session_state.tree_df.loc[df['ID'].astype(str) == sel_id, 'Name'] = new_name
-            st.rerun()
+        # 編集フォームを st.form にまとめて反映を確実にします
+        with st.form(key="edit_form"):
+            st.write(f"📍 選択中のID: **{sel_id}**")
+            new_name = st.text_input("ラベル名の変更:", value=current_node.iloc[0]['Name'])
+            submit_name = st.form_submit_button("名前を確定")
             
+            if submit_name:
+                st.session_state.tree_df.loc[df['ID'] == sel_id, 'Name'] = new_name
+                st.rerun()
+
         st.divider()
         
-        if st.button("➕ この下に子を追加"):
-            children_count = len(df[df['Parent'].astype(str) == sel_id])
-            new_id = f"{sel_id}.{children_count + 1}"
-            new_row = {"ID": new_id, "Parent": sel_id, "Name": "新しい子ラベル"}
-            st.session_state.tree_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        # 子の追加セクション
+        if st.button("➕ この下に子を追加", use_container_width=True):
+            children = df[df['Parent'] == sel_id]
+            new_id = f"{sel_id}.{len(children) + 1}"
+            new_row = pd.DataFrame([{"ID": new_id, "Parent": sel_id, "Name": "新しい子ラベル"}]).astype(str)
+            st.session_state.tree_df = pd.concat([df, new_row], ignore_index=True)
+            # 追加した子をそのまま選択状態にする
+            st.session_state.selected_id = new_id
             st.rerun()
             
         if sel_id != "1":
-            if st.button("🗑️ このノードを削除", type="secondary"):
-                st.session_state.tree_df = df[df['ID'].astype(str) != sel_id]
+            if st.button("🗑️ このノードを削除", type="secondary", use_container_width=True):
+                # 子要素も一緒に削除する（簡易的な実装）
+                st.session_state.tree_df = df[~df['ID'].str.startswith(sel_id)]
                 st.session_state.selected_id = "1"
                 st.rerun()
     else:
         st.info("図の中の丸印をクリックして選択してください。")
-with st.expander("📝 内部データ構造の確認（Pandas DataFrame）"):
-    st.write(st.session_state.tree_df)
+
+# デバッグ用（不要になったら消してください）
+with st.expander("📝 内部データの状態"):
+    st.write(f"現在の選択ID: {st.session_state.selected_id}")
+    st.table(st.session_state.tree_df)
