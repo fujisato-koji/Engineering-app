@@ -4,13 +4,13 @@ from streamlit_echarts import st_echarts
 
 st.set_page_config(page_title="Requirement Architect", layout="wide")
 
-st.title("🧩 ダイナミック要求デザイン（A, B, C設計）")
+st.title("🧩 ダイナミック要求デザイン")
 
-# --- 1. データの初期化 ---
+# --- 1. データの初期化（型の不一致を防ぐため全て文字列で統一） ---
 if 'tree_df' not in st.session_state:
     st.session_state.tree_df = pd.DataFrame([
         {"ID": "1", "Parent": "", "Name": "要求A"}
-    ]).astype(str)
+    ], dtype=str)
 
 if 'selected_id' not in st.session_state:
     st.session_state.selected_id = "1"
@@ -46,25 +46,23 @@ with col_graph:
     tree_data = build_tree(st.session_state.tree_df, st.session_state.selected_id)
     
     options = {
-        "tooltip": {"trigger": "item"},
         "series": [{
             "type": "tree",
             "data": [tree_data],
             "top": "15%", "left": "10%", "bottom": "15%", "right": "20%",
-            "symbolSize": 28,
+            "symbolSize": 30,
             "initialTreeDepth": 10,
             "label": {"position": "top"},
             "leaves": {"label": {"position": "right"}},
             "expandAndCollapse": True,
-            "animationDuration": 400,
         }]
     }
     
-    # 最も安定している 'click' を使用
+    # クリックイベント
     events = {"click": "function(params) { return params.data.id; }"}
     res = st_echarts(options, events=events, height="600px", key="tree_editor")
     
-    # グラフがクリックされた場合の処理
+    # グラフクリック時の反応
     if res:
         new_id = str(res[0]) if isinstance(res, list) else str(res)
         if new_id != st.session_state.selected_id:
@@ -74,47 +72,66 @@ with col_graph:
 with col_edit:
     st.subheader("🛠️ ノード編集")
     
+    # 最新のデータを取得
     df = st.session_state.tree_df
+    all_ids = df['ID'].astype(str).tolist()
     
-    # 【バックアップ機能】グラフが反応しないとき用のリスト選択
-    id_list = df['ID'].tolist()
-    # 現在の選択をリストのデフォルトにする
-    try:
-        default_idx = id_list.index(st.session_state.selected_id)
-    except:
-        default_idx = 0
-        
-    manual_sel = st.selectbox("ノードを選択（グラフ反応なし時の予備）:", id_list, index=default_idx)
-    if manual_sel != st.session_state.selected_id:
-        st.session_state.selected_id = manual_sel
+    # 現在の選択IDがリストに存在するか確認（なければルートに戻す）
+    if st.session_state.selected_id not in all_ids:
+        st.session_state.selected_id = all_ids[0]
+
+    # バックアップ用の選択ボックス
+    idx = all_ids.index(st.session_state.selected_id)
+    choice = st.selectbox("ノードを直接選択:", all_ids, index=idx)
+    if choice != st.session_state.selected_id:
+        st.session_state.selected_id = choice
         st.rerun()
 
     st.divider()
 
-    # 選択中のデータの編集
-    sel_id = st.session_state.selected_id
-    current_node = df[df['ID'] == sel_id]
+    # 選択されている行を確実に抽出
+    current_idx = df.index[df['ID'].astype(str) == st.session_state.selected_id].tolist()
     
-    if not current_node.empty:
-        with st.form(key="edit_form"):
-            st.write(f"📍 ID: **{sel_id}** を編集権限")
-            new_name = st.text_input("ラベル名:", value=current_node.iloc[0]['Name'])
-            if st.form_submit_button("✅ 名前を確定"):
-                st.session_state.tree_df.loc[df['ID'] == sel_id, 'Name'] = new_name
-                st.rerun()
+    if current_idx:
+        row_idx = current_idx[0]
+        st.write(f"📍 ID: **{st.session_state.selected_id}** を編集中")
+        
+        # 名前変更
+        new_name = st.text_input("ラベル名:", value=df.at[row_idx, 'Name'])
+        if st.button("✅ 名前を保存"):
+            st.session_state.tree_df.at[row_idx, 'Name'] = new_name
+            st.success("保存しました")
+            st.rerun()
 
         st.divider()
         
+        # 子の追加
         if st.button("➕ この下に子を追加", use_container_width=True):
-            children = df[df['Parent'] == sel_id]
-            new_id = f"{sel_id}.{len(children) + 1}"
-            new_row = pd.DataFrame([{"ID": new_id, "Parent": sel_id, "Name": "新しい要素"}]).astype(str)
+            parent_id = st.session_state.selected_id
+            children_count = len(df[df['Parent'].astype(str) == parent_id])
+            new_id = f"{parent_id}.{children_count + 1}"
+            
+            new_row = pd.DataFrame([{"ID": new_id, "Parent": parent_id, "Name": "新しい要素"}], dtype=str)
             st.session_state.tree_df = pd.concat([df, new_row], ignore_index=True)
             st.session_state.selected_id = new_id
             st.rerun()
             
-        if sel_id != "1":
-            if st.button("🗑️ このノードを削除", type="secondary", use_container_width=True):
-                st.session_state.tree_df = df[~df['ID'].str.startswith(sel_id)]
+        # 削除
+        if st.session_state.selected_id != "1":
+            if st.button("🗑️ 選択中のノードを削除", type="secondary", use_container_width=True):
+                target = st.session_state.selected_id
+                # 自分と、自分から始まるIDの子をすべて消す
+                st.session_state.tree_df = df[~df['ID'].astype(str).str.startswith(target)]
                 st.session_state.selected_id = "1"
                 st.rerun()
+    else:
+        st.error("エラー: ノードが見つかりません。")
+        if st.button("データをリセット"):
+            del st.session_state.tree_df
+            st.rerun()
+
+# 診断用（問題がある時だけ開いてください）
+with st.expander("🔍 診断ツール"):
+    st.write(f"選択中のID: {st.session_state.selected_id}")
+    st.write("現在のデータテーブル:")
+    st.dataframe(st.session_state.tree_df)
