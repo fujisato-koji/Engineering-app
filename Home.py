@@ -8,7 +8,7 @@ st.set_page_config(
 )
 
 # ヘッダー部分
-st.title("🚀 HOSPO 統合エンジニアリングポータル")
+st.title("🚀 統合エンジニアリングポータル")
 st.markdown("---")
 
 st.markdown("""
